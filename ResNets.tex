@@ -1,0 +1,304 @@
+\documentclass{article}
+
+\usepackage{neurips_2021}
+\usepackage{natbib}
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+\usepackage{xcolor}         % colors
+\usepackage{graphicx}
+\usepackage{subcaption}
+
+\makeatletter
+\@submissionfalse
+\makeatother
+
+\makeatletter
+\renewcommand{\@notice}{}
+\makeatother
+
+\title{From ResNets to Runge-Kutta Networks: A Review of Generalized Residual Connections in Deep Learning}
+
+\author{
+  Tom Feldhausen \\
+  Department of Mathematics\\
+  Ruhr-Universität Bochum\\
+  44801 Bochum, Germany\\
+  \texttt{tom.feldhausen@ruhr-uni-bochum.de} \\
+   \And
+   Sebastian Vallbo \\
+   Department of Data Science\\
+   Göteborgs universitet\\
+   405 30 Gothenburg, Sweden\\
+   \texttt{sebastianvallbo@gmail.com}\\
+}
+
+\begin{document}
+\bibliographystyle{plainnat}
+
+\maketitle
+
+\begin{abstract}
+	As the field of deep learning excels in numerous areas, this paper aims to review one of the more recent disruptive breakthroughs. A major problem in deep learning is that adding more layers to a neural network can result in a worse performance, thus preventing networks from learning highly complex functions as encountered in fields such as image recognition. The introduction of the Residual Neural Network ~\citep{he2016} improved performance for deep networks significantly, an approach that is also used in state-of-the-art transformer models ~\citep{vaswani2017attention}. It was then recently discovered that these ResNets are part of an even bigger class of networks, the Runge-Kutta Networks~\citep{benning2019}, building on an early paper~\citep{leCun1988} that discovered a connection between the learning problem and ordinary differential equations, which can be numerically solved by Runge-Kutta methods. In this work, we will summarize these architectures and experimentally compare their respective accuracies, providing an implementation of Runge-Kutta networks for any explicit method and determining the best way to do residual connections.
+\end{abstract}
+
+\section{Introduction}
+We begin by introducing the notation for general fully connected neural networks. For a comprehensive introduction we refer to ~\citep{higham2019}.
+
+Starting with the input $y^{[0]} = x \in \mathbb{R}^{n}$, let $y^{[i]} \in \mathbb{R}^{n^{[i]}}$ denote the input to the ($i+1$)-th layer, whose components we call neurons. The recursive formula 
+$$
+y^{[i+1]} = \sigma(W^{[i]} y^{[i]} + \beta^{[i]}) = f(y^{[i]}, u^{[i]})
+$$
+defines the forward propagation with component-wise application of the activation function $\sigma$, typically the sigmoid or relu function. The transformation applied by the $i$-th layer is summarized as $f: \mathbb{R}^{n^{[i]}} \to \mathbb{R}^{n^{[i+1]}}$. We finally get the vector $y^{[N]} \in \mathbb{R}^{n^{[N]}}$ of the output layer, which in case of binary classification is then mapped to a probability $C(W^{[N]} y^{[N]} + \beta^{[N]}) \in [0, 1]$ by the hypothesis function $C$, typically using sigmoid for binary classification or softmax for multi-class problems
+
+We write $u=(u^{[0]}, ..., u^{[N]})$ with weights and biases $u^{[i]} = (W^{[i]}, \beta^{[i]})$ and define the mean-squared loss function 
+$$
+J(u) = \sum_{j=1}^{m} |C(W^{[N]} y_{j}^{[N]} + \beta^{[N]}) - c_{j}|,
+$$
+where we sum over the $m$ samples of the training data and $c_j$ denotes the label of the $j$-th sample. As we aim to minimize the loss, we face an optimization problem that can be solved iteratively by the method of gradient descent, a process referred to as training or learning.
+
+Notice that neural networks can be seen as a combination of ensemble methods for one-neuron classifiers. Neurons are organized horizontally within a layer, and layers are stacked vertically, with the output of one layer serving as the input to the next.
+
+However, especially for deep models - architectures involving a lot of layers - the learning process faces many challenges which can lead to the situation that deeper models perform worse than shallower ones. This is counterintuitive: a deeper network should at least be capable of learning the identity function, preserving the output of the smaller network and performing no worse.
+
+\section{Related work}
+This inspired the introduction of the residual neural network (ResNet)~\citep{he2016}, winner of ILSVRC 2015 in image classification, detection, and localization as well as winner of MS COCO 2015 detection, and segmentation~\citep{tsang2018resnet}. Let $F^*(x)$ be the optimal transformation which the neural network aims to learn and let $F(x)$ be the actually learned transformation, e.g. for two layers we have
+$$
+F(x) = \sigma(W^{[1]} \sigma(W^{[0]} x + \beta^{[0]}) + \beta^{[1]}).
+$$
+
+For an optimal classical network we have $F(x) = F^*(x)$. The ResNet however aims to learn the residual $F(x) = F^*(x) - x$ by changing the forward propagation formula to 
+$$
+y^{[i+1]} = y^{[i]} + f(y^{[i]}, u^{[i]}),
+$$
+so called residual or shortcut connections. These connections simplify the learning process by making it easier for the network to approximate the identity function when necessary. This approach intuitively resolves the problem of deeper networks performing worse, as the network can now focus on learning incremental refinements to the input, rather than relearning the entire transformation.
+
+The introduction of the Runge-Kutta networks generalize this approach by exploiting a connection to the theory of ordinary differential equations~\citep{benning2019}. A first order ODE with intial condition $y(0) = y_0$ can be written as 
+$$
+y'(t) = f(t, y(t)),
+$$
+that is the derivative of a function depends on the variable and the function itself. An easy example for a fixed $\lambda \in \mathbb{R}$ is 
+$$
+y'(t) = \lambda y(t),
+$$
+which is solved by $y(t) = e^{\lambda t}$. In the general case analytical solutions can often not be found, leaving us with methods to approximate solutions. Numerical methods for solving ODEs are well-studied, the most famous methods being Runge-Kutta methods and multi-step methods. The easiest example for the former is the explicit Euler method. 
+
+First, set a grid $0 = t^{[0]} < t^{[1]} = \Delta t < ... < t^{[K]} = K \Delta t $ with the goal to approximate the exact solution $y(t^{[i]}) \approx y^{[i]}$. The easiest way to guess the derivative is the first-order Taylor approximation
+$$
+y(t + \Delta t) \approx y(t) + \Delta t y'(t),
+$$
+which is exact if the average slope between $t$ and $t + \Delta t$ equals $y'(t)$. As we only have that information it is a reasonable estimate. This motivates the iterative method
+$$
+y^{[i+1]} = y^{[i]} + \Delta t f(t^{[i]}, y^{[i]})
+$$
+for solving the ODE. To give an intuitive summary: We know the starting value and derivative. In order to determine the next value, we estimate the slope to be the slope in our starting point and get a new value. Obviously there are more advanced ways to determine the slope, yielding the family of Runge-Kutta methods
+$$
+y^{[i+1]} = y^{[i]} + \Delta t \Psi(t^{[i]}, y^{[i]}, y^{[i+1]}).
+$$
+
+Remember the ResNet's formula for forward propagation is 
+$$
+y^{[i+1]} = y^{[i]} + f(y^{[i]}, u^{[i]}),
+$$
+which we can now identify as Euler's method with the residual parameter $\Delta t = 1$. The idea is now to substitute this by the general Runge-Kutta method
+$$
+y^{[i+1]} = y^{[i]} + \Delta t \Psi(u^{[i]}, y^{[i]}, y^{[i+1]}),
+$$
+
+providing a more general framework for residual connections.
+
+Notice that this architecture relies on keeping the dimension of each layer identical. However, there are straightforward extensions to variable dimensions for layers by changing the formula to
+$$
+y^{[i+1]} = W_{0}^{[i]} y^{[i]} + \sigma(W^{[i]} y^{[i]} + \beta^{[i]}),
+$$
+see \citep{he2016}.
+
+\section{Proposal}
+In this paper, we aim to achieve the following objectives:
+
+\begin{enumerate}
+	\label{hyp1}
+    \item \textbf{Demonstrate the failure of standard deep neural networks:} We will analyze the limitations of traditional deep networks, showing that, as depth increases, their performance tends to degrade due to difficulties in learning complex representations.
+   
+   	\label{hyp2} 
+    \item \textbf{Show that ResNets overcome this issue:} We will explore how Residual Neural Networks (ResNets) mitigate the problems of deep networks by introducing residual connections, which allow for easier training and improved performance in deeper architectures.
+    
+    	\label{hyp3}
+    \item \textbf{Extend this analysis to Runge-Kutta Networks:} Building upon ResNets, we will show that Runge-Kutta Networks, which are inspired by the analogy to ordinary differential equations (ODEs), also solve the issue of performance degradation in deep networks, providing a robust framework for deeper architectures.
+    
+    	\label{hyp4}
+    \item \textbf{Determine the optimal method for residual connections:} By comparing standard residual connections, as used in ResNets, with those in Runge-Kutta Networks, we will investigate which type of residual connection yields the best performance in deep neural networks.
+    
+    	\label{hyp5}
+    \item \textbf{Analyze the validity of the analogy to ODEs:} Finally, we will critically examine how well the analogy between deep learning models (especially Runge-Kutta Networks) and ODE solvers holds, and assess its implications for understanding and designing neural network architectures.
+\end{enumerate}
+
+Although the analogy to ODEs theoretically extends to implicit solvers and multi-step methods, our work will focus on explicit one-step Runge-Kutta methods. The reason for this choice is twofold: implicit methods involve the solving of non-linear equation systems, which is computationally expensive, and multi-step methods complicate backpropagation, making them less practical for use in deep learning.
+
+To the best of our knowledge, this paper presents the first implementation of Runge-Kutta Networks that works for arbitrary explicit Runge-Kutta methods. However, unlike the approach proposed by ~\citep{benning2019}, which connects the optimization problem to optimal control theory for gradient computation, we will rely on standard backpropagation and automatic differentiation for computing gradients.
+
+\section{Experiments and results}
+To facilitate replication of the experiments and further analysis, the Python code used in this study can be downloaded from GitHub~\citep{tom2024}.
+
+We implemented three classes of neural networks: the standard feed forward neural networks, the residual networks and the Runge-Kutta networks. 
+
+For all networks we used batch-normalization after each layer. All hidden layers were of the same dimension, see fig. \ref{fig1} and the number of parameters for each network architecture was approximately the same for equivalent depth.
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.7\textwidth]{C:/Users/ruhrg/Documents/Studium/9. Semester/ML/Project Paper/src/architecture.png}
+    \caption{neural network with N hidden layers of dimension 8}
+    \label{fig1}
+\end{figure}
+
+The networks were implemented using the tensorflow library, thus using standard backpropagation and automatic differentiation for gradient computation, which differs from the approach of ~\citep{benning2019} that is based on optimal control theory, but sped up training due to built-in parallelization. 
+
+For the first experiment we used the spiral dataset, see fig. \ref{fig2}. As a training algorithm we used mini-batch ADAM with batch-size 32 and 200 epochs, while choosing sparse cross-entropy as the loss function.
+
+\begin{figure}[h!]
+    \centering
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{C:/Users/ruhrg/Documents/Studium/9. Semester/ML/Project Paper/src/spiral_train.png}
+        \label{fig2-1}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{C:/Users/ruhrg/Documents/Studium/9. Semester/ML/Project Paper/src/spiral_test.png}
+        \label{fig2-2}
+    \end{subfigure}
+    \caption{Spirals 2D}
+    \label{fig2}
+\end{figure}
+
+
+For a brief introduction to Runge-Kutta methods, including definitions of key terms such as order of convergence, consistency, and stages, see Appendix~\ref{app1}. We focused on methods with residual parameter $\Delta t = 1$, for RKN this means all methods considered were consistent. For the RKN we reviewed the following methods: Euler (order 1), Heun (order 2), RK4 (order 4) and RK8 (order 8). Intuitively it holds the higher the order, the more accurate the method. In that sense, all methods described are as accurate as they can be with respect to their number of stages (i.e., their complexity). If the analogy to ODEs holds, we would generally expect higher-order methods to perform better.
+
+For all the described network classes, we trained the models for $N = 5, 10, ..., 50$ layers. All the results can be reviewed in a tableau dashboard~\citep{tom2024tableau}.
+
+First of all, we were able to reproduce the results from He et al. For deeper networks, standard networks do converge only slowly, if they do at all. The residual network however reliably converges even for deep networks. The same holds for Runge-Kutta networks, even though the observed convergence is slower for all considered models, see fig. \ref{fig3}. This proves the objectives \ref{hyp1}, \ref{hyp2} and \ref{hyp3}.
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.7\textwidth]{C:/Users/ruhrg/Documents/Studium/9. Semester/ML/Project Paper/src/exp1_acc_50.png}
+    \caption{accuracy of depth 50 networks}
+    \label{fig3}
+\end{figure}
+
+There is no evidence that higher-order methods perform better, especially as the residual network itself is induced by Euler's method. This seems to suggest the analogy to ODEs (objective \ref{hyp5}) is not very well suited. Expectedly, methods with more stages take longer to train, see fig. \ref{fig4}.
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.7\textwidth]{C:/Users/ruhrg/Documents/Studium/9. Semester/ML/Project Paper/src/exp1_runtime_50.png}
+    \caption{runtime of depth 50 networks}
+    \label{fig4}
+\end{figure}
+
+In a second experiment, we also considered different choices of the residual parameter $\Delta t \in {0.1, 0.5, 0.8, 1, 1.5}$. As is illustrated in fig. \ref{fig5}, the parameter choice $\Delta t = 1$ does indeed yield the best results (objective \ref{hyp4}). This does intuitively make sense because it corresponds to learning the residual or from the perspective of adding layers to an already existing network, it does switch the task of learning an equally good model from learning the identity to learning the easier-to-learn 0 map.
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.7\textwidth]{C:/Users/ruhrg/Documents/Studium/9. Semester/ML/Project Paper/src/exp2_acc_50.png}
+    \caption{accuracy of depth 50 residual networks}
+    \label{fig5}
+\end{figure}
+
+\section{Conclusion}
+We reviewed the breakthrough paper from He et al. introducing residual connections and signifantly improving performance of deep models. We could replicate the results and show that traditional neural networks face major challenges in the case of deep architectures, even for low-complexity datasets. We also showed that the residual network as well as the Runge-Kutta networks, inspired by an analogy between the resiudal network to ODEs, still learn efficiently also for deep networks.
+
+However, we also showed that the residual network has better performance than the Runge-Kutta networks and that the order of the Runge-Kutta method inducing the model architecture does not corelate to model performance. Therefore, we conclude that the analogy even though mathematically elegant, is limited in its practical relevance.
+
+Finally we experimentally verified that the residual parameter $\Delta t = 1$ seems to be the best choice, in accordance with best practice.
+
+\bibliography{references}
+
+\appendix
+\section{Appendix} 
+\subsection{Runge-Kutta methods} \label{app1}
+This section is inspired by ~\citep{rannacher2017numerik}, which we also recommend for a comprehensive introduction. Remember our definition of ODEs:
+$$
+y'(t) = f(t, y(t)).
+$$
+
+We define a m-stage Runge-Kutta method with parameters $b \in \mathbb{R}^m$, $c \in \mathbb{R}^m$ and $A \in \mathbb{R}^{m \times m}$ as
+$$
+y^{[i+1]} = y^{[i]} + \Delta t \sum_{l=1}^{m} b_{l} \eta_{l}^{[i]}, \
+\eta_{l}^{[i]} = f(t^{[i]} + \Delta t c_{l}, y^{[i]} + \Delta t \sum_{j=1}^{m} A_{lj} \eta_{j}^{[i]}).
+$$
+and shorthand write
+$$
+y^{[i+1]} = y^{[i]} + \Delta t \Phi(t^{[i]}, y^{[i]}, y^{[i+1]}, \Delta t),
+$$
+where $\Phi$ estimates the slope. We can illustrate the methods in a butcher tableau, see fig. \ref{figA2}. 
+\begin{figure}[h]
+\centering
+\[
+\begin{array}
+{c|c}
+c & A \\
+\hline
+& b
+\end{array}
+\]
+\caption{Butcher tableau}
+\label{figA2}
+\end{figure}
+
+A RK-method is convergent of order $p \geq 0$ if for sufficiently smooth functions $f$ the approximation
+$$
+\max_{i = 0,...,K} ||y(t^{[i]}) - y^{[i]}||_{\infty} = O(\Delta t^{p}).
+$$
+holds, where $y(t^{[i]})$ denotes the solution and $y^{[i]}$ the method's approximation. Consistency can be seen as a local version of convergence and is equivalent to $\sum_{l=1}^{m} b_l = 1$. Intuitively this translates to the total stepsize of the method being equal to $\Delta t$, a natural condition. Our models are induced by the following consistent methods:
+
+\begin{figure}[h]
+\centering
+\begin{minipage}{.2\textwidth}
+  \centering
+  \[
+  \begin{array}{c|c}
+  0 & 0 \\
+  \hline
+  & 1
+  \end{array}
+  \]
+  \caption*{Euler (Order 1)}
+\end{minipage}
+\begin{minipage}{.2\textwidth}
+  \centering
+  \[
+  \begin{array}{c|cc}
+  0 & & \\
+  1 & 1 &  \\
+  \hline
+  & \frac{1}{2} & \frac{1}{2}
+  \end{array}
+  \]
+  \caption*{Heun (Order 2)}
+\end{minipage}
+\begin{minipage}{.2\textwidth}
+  \centering
+\[
+\begin{array}
+{c|cccc}
+0\\
+\frac{1}{2} & \frac{1}{2}\\
+\frac{1}{2} &0 &\frac{1}{2} \\
+1& 0& 0& 1\\
+\hline
+& \frac{1}{6} &\frac{1}{3} &\frac{1}{3} &\frac{1}{6}
+\end{array}
+\]
+  \caption*{RK4 (Order 4)}
+\end{minipage}
+\caption{Runge-Kutta methods: Euler, Heun and RK4 (from left to right).}
+\label{figA1}
+\end{figure}
+
+
+\end{document}
